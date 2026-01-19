@@ -15,8 +15,12 @@
 //!
 //! Notes:
 //! - `soft_dtw` is not a metric in general.
-//! - The **Soft-DTW divergence** is a common nonnegative substitute:
+//! - `soft_dtw(x,y,γ)` is a smooth relaxation of DTW, but it can be biased (and
+//!   is not minimized at `x == y` for many settings).
+//! - The **Soft-DTW divergence** is a common debiased substitute:
 //!   \(\operatorname{sdtw}_\gamma(x,y)-\tfrac12\operatorname{sdtw}_\gamma(x,x)-\tfrac12\operatorname{sdtw}_\gamma(y,y)\).
+//!   This is typically nonnegative and is zero on identical inputs (under the
+//!   usual squared-distance setting).
 
 /// Errors for Soft-DTW operators.
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
@@ -160,6 +164,7 @@ pub fn soft_dtw_divergence_cost(
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::f64;
 
     #[test]
     fn identical_sequences_have_zero_divergence() {
@@ -208,6 +213,49 @@ mod tests {
         let v_cost = soft_dtw_cost(&cost_xy, n, m, gamma).unwrap();
 
         assert!((v_scalar - v_cost).abs() < 1e-12, "scalar={} cost={}", v_scalar, v_cost);
+    }
+
+    fn dtw_squared(x: &[f64], y: &[f64]) -> f64 {
+        // Classic DTW DP with squared distance and min-plus semiring.
+        // Returns the minimal path cost.
+        let n = x.len();
+        let m = y.len();
+        assert!(n > 0 && m > 0);
+        let w = m + 1;
+        let mut r = vec![f64::INFINITY; (n + 1) * (m + 1)];
+        r[0] = 0.0;
+        for i in 1..=n {
+            for j in 1..=m {
+                let d = (x[i - 1] - y[j - 1]).powi(2);
+                let a = r[(i - 1) * w + j];
+                let b = r[i * w + (j - 1)];
+                let c = r[(i - 1) * w + (j - 1)];
+                r[i * w + j] = d + a.min(b).min(c);
+            }
+        }
+        r[n * w + m]
+    }
+
+    #[test]
+    fn soft_dtw_bounds_dtw_with_gamma_ln3_slack() {
+        // Lemma: softmin_γ(a,b,c) ∈ [min(a,b,c) - γ ln 3, min(a,b,c)].
+        // Over an (n+m)-step DTW path, the total slack is O((n+m) γ ln 3).
+        let x = [0.2, -0.1, 0.5, 0.0];
+        let y = [0.1, 0.4, -0.2];
+        let gamma = 1e-3;
+
+        let dtw = dtw_squared(&x, &y);
+        let s = soft_dtw(&x, &y, gamma).unwrap();
+
+        let slack = ((x.len() + y.len()) as f64) * gamma * 3.0_f64.ln();
+        assert!(s <= dtw + 1e-12, "expected soft_dtw <= dtw (s={} dtw={})", s, dtw);
+        assert!(
+            dtw - s <= slack + 1e-9,
+            "expected dtw - soft_dtw <= O((n+m)γln3): dtw={} s={} slack={}",
+            dtw,
+            s,
+            slack
+        );
     }
 }
 

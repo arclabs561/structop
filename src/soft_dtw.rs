@@ -257,5 +257,23 @@ mod tests {
             slack
         );
     }
+
+    #[test]
+    fn soft_dtw_can_be_negative_on_diagonal_but_divergence_is_zero() {
+        // This encodes the “entropic bias” intuition from the Soft-DTW literature:
+        // the relaxed objective can be negative even with nonnegative costs, because
+        // soft-min aggregates over many warping paths.
+        //
+        // The divergence construction cancels that bias by subtracting the self-terms.
+        let x = [0.0, 1.0, 2.0, 3.0];
+        let gamma = 5.0;
+
+        let xx = soft_dtw(&x, &x, gamma).unwrap();
+        assert!(xx.is_finite());
+        assert!(xx < 0.0, "expected soft_dtw(x,x,gamma) < 0 for large gamma, got {}", xx);
+
+        let d = soft_dtw_divergence(&x, &x, gamma).unwrap();
+        assert!(d.abs() < 1e-10, "expected divergence(x,x)=0, got {}", d);
+    }
 }
 

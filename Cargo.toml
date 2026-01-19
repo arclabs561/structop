@@ -10,10 +10,10 @@ homepage.workspace = true
 documentation.workspace = true
 
 [dependencies]
-ndarray.workspace = true
 thiserror = { workspace = true }
 
 [dev-dependencies]
+ndarray.workspace = true
 proptest = { workspace = true }
 
 [lints]

@@ -15,7 +15,7 @@
 //! This allows us to use the alignment score as a continuous feature for clustering
 //! or churn prediction models.
 
-use structop::soft_dtw::soft_dtw_divergence;
+use structop::soft_dtw::soft_dtw_divergence_cost;
 
 // Simple one-hot state encoding
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,37 +39,38 @@ impl State {
     }
 }
 
-fn to_sequence(states: &[State]) -> Vec<f64> {
-    // Flatten for structop which takes &[f64] (assuming 1D for now, 
-    // but Soft-DTW in structop is 1D Euclidean. 
-    // Wait, structop::soft_dtw takes &[f64]. Is it 1D?
-    // Let's check the source. It computes (x[i]-y[j])^2.
-    // That means it supports 1D sequences.
-    //
-    // For multidimensional states, we need to generalize structop or hack it.
-    // Hack: encode states as integers 0.0, 1.0... NO, that implies order.
-    //
-    // CORRECT FIX: We need `structop` to support multidimensional points,
-    // OR we provide a precomputed distance matrix.
-    //
-    // Let's check structop again.
-    // "pub fn soft_dtw(x: &[f64], y: &[f64], gamma: f64)"
-    // It assumes scalar sequences.
-    //
-    // Okay, for this demo to work beautifully, I should update `structop` to 
-    // accept a `dist_fn` or cost matrix, just like `wass`.
-    // That's a high-value improvement!
-    //
-    // For now, let's pretend states are 1D embeddings (e.g. "funnel depth").
-    // Landing=0, Blog=0.5, Pricing=1, SignUp=2, Exit=-1.
-    // This preserves "progress".
-    states.iter().map(|s| match s {
-        State::Landing => 0.0,
-        State::Blog => 0.5,
-        State::Pricing => 1.0,
-        State::SignUp => 2.0,
-        State::Exit => -1.0,
-    }).collect()
+fn state_cost(a: State, b: State) -> f64 {
+    // A tiny, explicit metric over categorical states.
+    // Equal states have 0 cost; mismatches have 1 cost, except "Exit" which is
+    // “far” from everything else (we don't want exiting to look like a mild detour).
+    if a == b {
+        return 0.0;
+    }
+    if a == State::Exit || b == State::Exit {
+        return 2.0;
+    }
+    1.0
+}
+
+fn cost_matrix_xy(x: &[State], y: &[State]) -> Vec<f64> {
+    let n = x.len();
+    let m = y.len();
+    let mut cost = vec![0.0f64; n * m];
+    for i in 0..n {
+        for j in 0..m {
+            cost[i * m + j] = state_cost(x[i], y[j]);
+        }
+    }
+    cost
+}
+
+fn sdtw_divergence_states(x: &[State], y: &[State], gamma: f64) -> f64 {
+    let n = x.len();
+    let m = y.len();
+    let cost_xy = cost_matrix_xy(x, y);
+    let cost_xx = cost_matrix_xy(x, x);
+    let cost_yy = cost_matrix_xy(y, y);
+    soft_dtw_divergence_cost(&cost_xy, &cost_xx, &cost_yy, n, m, gamma).unwrap()
 }
 
 fn print_seq(name: &str, seq: &[State]) {
@@ -84,29 +85,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let user_b = [State::Landing, State::Blog, State::Pricing, State::Blog, State::Pricing, State::SignUp];
     let user_c = [State::Landing, State::Blog, State::Exit];
 
-    let seq_golden = to_sequence(&golden_path);
-    let seq_a = to_sequence(&user_a);
-    let seq_b = to_sequence(&user_b);
-    let seq_c = to_sequence(&user_c);
-
     let gamma = 1.0;
 
     println!("User Journey Alignment (Soft-DTW, gamma={})", gamma);
-    println!("Note: Using 1D 'funnel depth' embedding for states.");
+    println!("Note: Using an explicit categorical cost (0=same, 1=mismatch, 2=Exit mismatch).");
     println!();
 
     print_seq("Golden Path", &golden_path);
     println!();
 
-    let score_a = soft_dtw_divergence(&seq_golden, &seq_a, gamma).unwrap();
+    let score_a = sdtw_divergence_states(&golden_path, &user_a, gamma);
     print_seq("User A (Ideal)", &user_a);
     println!("   Score: {:.4} (Perfect match)", score_a);
 
-    let score_b = soft_dtw_divergence(&seq_golden, &seq_b, gamma).unwrap();
+    let score_b = sdtw_divergence_states(&golden_path, &user_b, gamma);
     print_seq("User B (Noisy)", &user_b);
     println!("   Score: {:.4} (High alignment despite noise)", score_b);
 
-    let score_c = soft_dtw_divergence(&seq_golden, &seq_c, gamma).unwrap();
+    let score_c = sdtw_divergence_states(&golden_path, &user_c, gamma);
     print_seq("User C (Bounce)", &user_c);
     println!("   Score: {:.4} (Poor alignment)", score_c);
 

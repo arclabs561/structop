@@ -12,23 +12,40 @@
 
 use ndarray::Array1;
 
-fn embed(text: &str, dim: usize) -> Array1<f32> {
+fn fnv1a_u32(chars: &[char]) -> u32 {
+    // 32-bit FNV-1a (fast, decent mixing for small tokens).
+    let mut h: u32 = 2166136261;
+    for &c in chars {
+        let x = c as u32;
+        h ^= x;
+        h = h.wrapping_mul(16777619);
+    }
+    h
+}
+
+fn embed_char_ngrams_signed(text: &str, dim: usize) -> Array1<f32> {
+    // Signed hashing of uni/bi/trigrams with BOS/EOS markers.
+    // This avoids “everything collides positively” failure modes in tiny demos.
     let mut v = Array1::<f32>::zeros(dim);
+
     let s = text.to_lowercase();
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() >= 3 {
-        for i in 0..chars.len() - 2 {
-            let h = (chars[i] as usize * 31 * 31
-                + chars[i + 1] as usize * 31
-                + chars[i + 2] as usize)
-                % dim;
-            v[h] += 1.0;
+    let mut xs: Vec<char> = Vec::with_capacity(s.chars().count() + 2);
+    xs.push('\u{0002}'); // BOS
+    xs.extend(s.chars());
+    xs.push('\u{0003}'); // EOS
+
+    for n in [3usize, 2, 1] {
+        if xs.len() < n {
+            continue;
         }
-    } else {
-        for c in chars {
-            v[(c as usize) % dim] += 1.0;
+        for i in 0..=xs.len() - n {
+            let h = fnv1a_u32(&xs[i..i + n]);
+            let idx = (h as usize) % dim;
+            let sign = if (h & 1) == 0 { 1.0 } else { -1.0 };
+            v[idx] += sign;
         }
     }
+
     let norm = v.dot(&v).sqrt();
     if norm > 0.0 {
         v /= norm;
@@ -81,8 +98,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     let dim = 256;
-    let ref_vecs: Vec<Array1<f32>> = ref_sents.iter().map(|s| embed(s, dim)).collect();
-    let noisy_vecs: Vec<Array1<f32>> = noisy_sents.iter().map(|s| embed(s, dim)).collect();
+    let ref_vecs: Vec<Array1<f32>> = ref_sents
+        .iter()
+        .map(|s| embed_char_ngrams_signed(s, dim))
+        .collect();
+    let noisy_vecs: Vec<Array1<f32>> = noisy_sents
+        .iter()
+        .map(|s| embed_char_ngrams_signed(s, dim))
+        .collect();
 
     let n = ref_vecs.len();
     let m = noisy_vecs.len();

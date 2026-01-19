@@ -275,5 +275,37 @@ mod tests {
         let d = soft_dtw_divergence(&x, &x, gamma).unwrap();
         assert!(d.abs() < 1e-10, "expected divergence(x,x)=0, got {}", d);
     }
+
+    #[test]
+    fn soft_dtw_cost_is_monotone_in_costs() {
+        // Correct invariant: the soft-min DP is monotone.
+        // If C' >= C elementwise, then softDTW_γ(C') >= softDTW_γ(C).
+        let n = 4usize;
+        let m = 3usize;
+        let gamma = 0.8;
+
+        let cost_xy = vec![
+            0.1, 1.0, 0.3, //
+            0.4, 0.2, 0.9, //
+            1.2, 0.7, 0.4, //
+            0.3, 0.6, 0.8, //
+        ];
+        let mut cost_xy2 = cost_xy.clone();
+
+        // Increase a few entries (elementwise nonnegative delta).
+        cost_xy2[0] += 0.5;
+        cost_xy2[4] += 0.2;
+        cost_xy2[11] += 1.0;
+
+        let s1 = soft_dtw_cost(&cost_xy, n, m, gamma).unwrap();
+        let s2 = soft_dtw_cost(&cost_xy2, n, m, gamma).unwrap();
+
+        assert!(
+            s2 + 1e-12 >= s1,
+            "expected monotonicity: softDTW(C')={} >= softDTW(C)={}",
+            s2,
+            s1
+        );
+    }
 }
 
